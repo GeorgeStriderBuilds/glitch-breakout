@@ -10,7 +10,8 @@
   body{display:flex;flex-direction:column;align-items:center}
   header{width:100%;max-width:520px;padding:10px 12px 4px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
   h1{margin:0;font-size:20px;letter-spacing:2px;color:#00f0ff;text-shadow:0 0 12px rgba(0,240,255,.55)}
-  #scores{font-size:14px;white-space:nowrap}
+  #scores{font-size:14px;text-align:right;line-height:1.5}
+  #scores #level{color:#00f0ff}
   #scores b{color:#ffe259}
   #wrap{width:min(94vw,460px);flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   canvas{width:100%;height:auto;aspect-ratio:400/520;background:#050a14;border:1px solid #0f5e7a;border-radius:10px;box-shadow:0 0 24px rgba(0,240,255,.12);touch-action:none;display:block}
@@ -32,7 +33,7 @@
 <body>
 <header>
   <h1>GLITCH BREAKOUT</h1>
-  <div id="scores">Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Best: <b id="best">0</b></div>
+  <div id="scores">Score: <span id="score">0</span> &nbsp; Lives: <span id="lives">3</span> &nbsp; Best: <b id="best">0</b> &nbsp; Level: <b id="level">1</b></div>
 </header>
 <div id="wrap">
   <canvas id="game" width="400" height="520" aria-label="Glitch Breakout game"></canvas>
@@ -61,6 +62,7 @@
   var scoreEl = document.getElementById("score");
   var livesEl = document.getElementById("lives");
   var bestEl = document.getElementById("best");
+  var levelEl = document.getElementById("level");
   var msgEl = document.getElementById("msg");
   var startBtn = document.getElementById("startBtn");
   var pauseBtn = document.getElementById("pauseBtn");
@@ -95,7 +97,8 @@
   sharpenCanvas();
   try { window.addEventListener("resize", sharpenCanvas); } catch (e) {}
 
-  var running = false, paused = false, raf = 0, last = 0;
+  var running = false, paused = false, gameOver = false, raf = 0, last = 0;
+  var finalScore = 0;
   var score = 0, lives = 3, level = 1;
   var shield = false, expandEndsAt = 0, levelClearEndsAt = 0;
   var paddle = { x: BOARD_W / 2 - BASE_PADDLE_W / 2, y: BOARD_H - 28, w: BASE_PADDLE_W, h: 12 };
@@ -130,32 +133,83 @@
     var s = ballSpeed();
     balls = [{ x: BOARD_W / 2, y: BOARD_H - 48, vx: s * 0.6, vy: -s, r: 7 }];
   }
-  function buildBricks(){
+  /* Varied walls per level. Every pattern below holds exactly 40
+     bricks on the 8-column grid. From level 2 some bricks take
+     2 hits, from level 4 some take 3. Power-up drop rates are
+     unchanged: about 1 in 5 bricks drops one, at most one
+     shield brick per level, so a shield in hand never stacks. */
+  var WALL_PATTERNS = [
+    ["XXXXXXXX",
+     "XXXXXXXX",
+     "XXXXXXXX",
+     "XXXXXXXX",
+     "XXXXXXXX"],
+    ["XXXXXXXX",
+     "X.XXXX.X",
+     "XXXXXXXX",
+     "XX.XX.XX",
+     "XXXXXXXX",
+     ".X.XX.X."],
+    ["XXXXXXXX",
+     "XX.XX.XX",
+     "X.XXXX.X",
+     "XXXXXXXX",
+     ".XX..XX.",
+     "X.XXXX.X",
+     "..X..X.."],
+    ["...XX...",
+     "..XXXX..",
+     ".XXXXXX.",
+     "XXXXXXXX",
+     "XXXXXXXX",
+     ".XXXXXX.",
+     "..XXXX..",
+     "...XX..."],
+    ["X.X.X.X.",
+     "X.X.X.X.",
+     "XXXXXXXX",
+     "X.X.X.X.",
+     "X.X.X.X.",
+     "XXXXXXXX",
+     "X.X.X.X.",
+     "X.X.X.X."]
+  ];
+  function buildBricks(level){
     bricks = [];
-    var rows = 5, cols = 8, gap = 4;
+    var pattern = WALL_PATTERNS[(level - 1) % WALL_PATTERNS.length];
+    var cols = 8, gap = 4;
     var bw = Math.floor((BOARD_W - 16 - (cols - 1) * gap) / cols);
     var bh = 18, x0 = (BOARD_W - (cols * bw + (cols - 1) * gap)) / 2;
-    var colors = ["#00f0ff", "#ff2e88", "#ffe259", "#ffffff", "#00f0ff"];
-    for (var r = 0; r < rows; r++) {
+    var colors = ["#00f0ff", "#ff2e88", "#ffe259", "#ffffff", "#00f0ff", "#ff2e88", "#ffe259", "#ffffff"];
+    var hpTwo = level >= 2, hpThree = level >= 4;
+    var idx = 0;
+    for (var r = 0; r < pattern.length; r++) {
+      var row = pattern[r];
       for (var c = 0; c < cols; c++) {
-        /* About 1 in 5 bricks drops a power-up. At most one shield per level,
-           so a shield already in hand can never stack into a second one. */
+        if (row.charAt(c) !== "X") continue;
+        var hp = 1;
+        if (hpThree && idx % 4 === 0) hp = 3;
+        else if (hpTwo && idx % 4 === 2) hp = 2;
         var drop = null;
         if (Math.random() < 0.2) {
           var pick = Math.random();
           drop = pick < 0.4 ? "M" : (pick < 0.75 ? "E" : "S");
           if (drop === "S" && bricks.some(function(b){ return b.drop === "S"; })) drop = "E";
         }
-        bricks.push({ x: x0 + c * (bw + gap), y: 46 + r * (bh + gap), w: bw, h: bh, color: colors[r], alive: true, drop: drop });
+        bricks.push({ x: x0 + c * (bw + gap), y: 46 + r * (bh + gap), w: bw, h: bh,
+                      color: colors[r % colors.length], hp: hp, alive: true, drop: drop });
+        idx++;
       }
     }
   }
   function resetGame(){
     score = 0; lives = 3; level = 1; shield = false;
+    gameOver = false; finalScore = 0;
     expandEndsAt = 0; levelClearEndsAt = 0;
     paddle.w = BASE_PADDLE_W; paddle.x = BOARD_W / 2 - BASE_PADDLE_W / 2;
     particles = []; glitches = []; powerups = [];
-    buildBricks(); resetBall(); updateHud();
+    buildBricks(level); resetBall(); updateHud();
+    levelEl.textContent = level;
   }
   function updateHud(){
     scoreEl.textContent = score;
@@ -227,7 +281,7 @@
     if (dt === undefined) dt = 1;
     if (levelClearEndsAt) {
       if (Date.now() >= levelClearEndsAt) {
-        levelClearEndsAt = 0; buildBricks(); resetBall();
+        levelClearEndsAt = 0; buildBricks(level); resetBall();
       } else {
         return; /* Brief pause between levels: balls and paddle hold still. */
       }
@@ -270,10 +324,18 @@
         var br = bricks[j];
         if (!br.alive) continue;
         if (b.x + b.r >= br.x && b.x - b.r <= br.x + br.w && b.y + b.r >= br.y && b.y - b.r <= br.y + br.h) {
-          br.alive = false;
-          score += 10; updateHud();
-          shatter(br); blip(660, 0.07);
-          if (br.drop) powerups.push({ x: br.x + br.w / 2, y: br.y + br.h, type: br.drop });
+          if (br.hp > 1) {
+            /* Armored brick: chip it, no drop yet, points for the crack. */
+            br.hp -= 1;
+            score += 5; updateHud();
+            shatter(br); blip(520, 0.06);
+            msgEl.textContent = br.hp > 1 ? "Cracked. " + br.hp + " hits to go." : "One more hit.";
+          } else {
+            br.alive = false;
+            score += 10; updateHud();
+            shatter(br); blip(660, 0.07);
+            if (br.drop) powerups.push({ x: br.x + br.w / 2, y: br.y + br.h, type: br.drop });
+          }
           /* Bounce off the side hit, not always vertically, so a ball
              cannot tunnel sideways through a row. */
           var overlapLeft = (b.x + b.r) - br.x, overlapRight = (br.x + br.w) - (b.x - b.r);
@@ -298,8 +360,10 @@
             lives--; updateHud();
             if (lives <= 0) {
               running = false; cancelAnimationFrame(raf);
-              msgEl.textContent = "Game over. Press Start to play again.";
+              gameOver = true; finalScore = score;
+              msgEl.textContent = "Signal lost. Press Start to jack back in.";
               startBtn.textContent = "Start";
+              draw();
             } else {
               msgEl.textContent = "Ball lost. " + lives + (lives === 1 ? " life" : " lives") + " left.";
               resetBall();
@@ -314,7 +378,8 @@
     if (running && balls.length > 0 && lives > 0 &&
         bricks.every(function(br){ return !br.alive; })) {
       level++; score += 50; updateHud();
-      msgEl.textContent = "Level " + level + "! Bricks rebuilt, a little faster.";
+      levelEl.textContent = level;
+      msgEl.textContent = "Level " + level + "! New wall, a little faster.";
       levelClearEndsAt = Date.now() + LEVEL_CLEAR_MS;
       balls = []; /* Cleared balls are replaced when the pause ends. */
     }
@@ -338,6 +403,13 @@
     bricks.forEach(function(br){
       if (!br.alive) return;
       ctx.fillStyle = br.color; ctx.fillRect(br.x, br.y, br.w, br.h);
+      /* Armored bricks wear their hits: white ring for 2-hit,
+         magenta ring for 3-hit. */
+      if (br.hp > 1) {
+        ctx.strokeStyle = br.hp > 2 ? "#ff2e88" : "#ffffff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(br.x + 3, br.y + 3, br.w - 6, br.h - 6);
+      }
       if (br.drop) { ctx.fillStyle = "#04070d"; ctx.font = "bold 10px system-ui"; ctx.textAlign = "center"; ctx.fillText(br.drop, br.x + br.w / 2, br.y + 13); }
     });
     glitches.forEach(function(gl){
@@ -368,10 +440,28 @@
     });
     if (!running) {
       ctx.fillStyle = "rgba(4,7,13,0.55)"; ctx.fillRect(0, 0, BOARD_W, BOARD_H);
-      ctx.fillStyle = "#e8fbff"; ctx.font = "bold 22px system-ui"; ctx.textAlign = "center";
-      ctx.fillText("GLITCH BREAKOUT", BOARD_W / 2, BOARD_H / 2 - 10);
-      ctx.font = "14px system-ui"; ctx.fillStyle = "#8fb8c4";
-      ctx.fillText("Press Start, then move the paddle.", BOARD_W / 2, BOARD_H / 2 + 16);
+      ctx.textAlign = "center";
+      if (gameOver) {
+        ctx.fillStyle = "#ff2e88"; ctx.font = "bold 26px system-ui";
+        ctx.fillText("SIGNAL LOST", BOARD_W / 2, BOARD_H / 2 - 24);
+        ctx.fillStyle = "#e8fbff"; ctx.font = "15px system-ui";
+        ctx.fillText("Score " + finalScore + ". Best " + best + ".", BOARD_W / 2, BOARD_H / 2 + 4);
+        ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
+        ctx.fillText("Press Start to jack back in.", BOARD_W / 2, BOARD_H / 2 + 30);
+      } else {
+        ctx.fillStyle = "#00f0ff"; ctx.font = "bold 22px system-ui";
+        ctx.fillText("GLITCH BREAKOUT", BOARD_W / 2, BOARD_H / 2 - 24);
+        ctx.fillStyle = "#e8fbff"; ctx.font = "15px system-ui";
+        ctx.fillText("The grid is corrupted. 40 bricks of static.", BOARD_W / 2, BOARD_H / 2 + 4);
+        ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
+        ctx.fillText("Drag or arrow keys. Keep the signal alive.", BOARD_W / 2, BOARD_H / 2 + 30);
+      }
+    } else if (paused) {
+      ctx.fillStyle = "rgba(4,7,13,0.6)"; ctx.fillRect(0, 0, BOARD_W, BOARD_H);
+      ctx.fillStyle = "#ffe259"; ctx.font = "bold 24px system-ui"; ctx.textAlign = "center";
+      ctx.fillText("PAUSED", BOARD_W / 2, BOARD_H / 2 - 8);
+      ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
+      ctx.fillText("Tap Resume, the board, or press space.", BOARD_W / 2, BOARD_H / 2 + 20);
     }
   }
 
@@ -409,7 +499,8 @@
     if (!running) return;
     paused = !paused;
     pauseBtn.textContent = paused ? "Resume" : "Pause";
-    if (!paused) { last = 0; raf = requestAnimationFrame(loop); }
+    if (paused) { draw(); }
+    else { last = 0; raf = requestAnimationFrame(loop); }
   }
   startBtn.addEventListener("click", start);
   pauseBtn.addEventListener("click", togglePause);
@@ -425,6 +516,13 @@
   });
   document.addEventListener("keyup", function(e){ keys[e.key] = false; });
 
+  /* Switching tabs pauses the run instead of ending it. The frame
+     gap clamp already covers short hiccups; this covers real
+     switches away from the game. */
+  document.addEventListener("visibilitychange", function(){
+    if (document.hidden && running && !paused) togglePause();
+  });
+
   function movePaddleFromEvent(e){
     var rect = canvas.getBoundingClientRect();
     var x = (e.clientX - rect.left) / rect.width * BOARD_W;
@@ -434,6 +532,7 @@
   canvas.addEventListener("pointerdown", function(e){
     e.preventDefault();
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}
+    if (paused) { togglePause(); return; }
     movePaddleFromEvent(e);
     if (!running) start();
   });
