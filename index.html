@@ -22,6 +22,16 @@
   #hint{text-align:center;font-size:12px;color:#8fb8c4;padding:0 8px 4px;line-height:1.4}
   footer{text-align:center;font-size:11px;color:#6f8d99;padding:4px 8px calc(10px + env(safe-area-inset-bottom))}
   @media (prefers-reduced-motion: reduce){canvas{box-shadow:none}}
+  /* Seasonal themes: a body class swaps the page chrome, while the
+     canvas board is drawn per theme in draw(). To add a holiday,
+     add a theme object in the script and a season window in
+     SEASON_DEFAULTS. */
+  .theme-spooky h1{color:#ff9b1a;text-shadow:0 0 12px rgba(255,155,26,.55)}
+  .theme-spooky #scores #level{color:#ff9b1a}
+  .theme-spooky canvas{background:#0d0618;border-color:#7a2cf0;box-shadow:0 0 24px rgba(122,44,240,.18)}
+  .theme-spooky button{border-color:#b06a1e}
+  .theme-spooky #msg{color:#ff9b1a}
+  .theme-spooky footer{color:#8d7a99}
   @media (max-width:380px){
     h1{font-size:17px}
     #scores{font-size:12px}
@@ -41,6 +51,7 @@
     <button id="startBtn" type="button">Start</button>
     <button id="pauseBtn" type="button">Pause</button>
     <button id="soundBtn" type="button">Sound: On</button>
+    <button id="themeBtn" type="button">Theme: Spooky</button>
   </div>
   <div id="msg"></div>
   <div id="hint">Move: arrow keys, or drag on the board. Smash bricks. Catch falling power-ups: M = multi-ball, E = wider paddle, S = shield (saves one fall).</div>
@@ -85,6 +96,78 @@
   var soundOn = loadStored("gb-sound", "on") !== "off";
   bestEl.textContent = best;
   soundBtn.textContent = soundOn ? "Sound: On" : "Sound: Off";
+
+  /* Seasonal theme framework: a theme is a full visual reskin, nothing
+     gameplay. To add a holiday, add a theme object to THEMES and a
+     season window to SEASON_DEFAULTS. The stored gb-theme choice wins;
+     otherwise the season picks the default. Gameplay constants, brick
+     layouts, HP rules, drop rates, physics, scoring, sound, and the
+     gb-best / gb-sound keys are untouched by themes. */
+  var THEMES = {
+    classic: {
+      name: "Classic",
+      grid: "rgba(0,240,255,0.07)",
+      moon: false, mist: false,
+      bricks: ["#00f0ff", "#ff2e88", "#ffe259", "#ffffff"],
+      paddle: "#00f0ff",
+      ball: { color: "#ffffff", glow: "#00f0ff", trail: null },
+      particles: ["#00f0ff", "#ff2e88"],
+      glitchA: "rgba(0,240,255,0.45)", glitchB: "rgba(255,46,136,0.45)",
+      startLine1: "The grid is corrupted. 40 bricks of static.",
+      startLine2: "Drag or arrow keys. Keep the signal alive.",
+      overTitle: "SIGNAL LOST", overTitleColor: "#ff2e88",
+      overLine2: "Press Start to jack back in."
+    },
+    spooky: {
+      name: "Spooky",
+      grid: "rgba(150,110,220,0.08)",
+      moon: true, mist: true,
+      bricks: ["#e86a17", "#c81e3a", "#7a2cf0", "#f5a623"],
+      paddle: "#00f0ff",
+      ball: { color: "#ff9b1a", glow: "#ff9b1a", trail: "#ff9b1a" },
+      particles: ["#ff9b1a", "#c81e3a", "#7a2cf0"],
+      glitchA: "rgba(255,155,26,0.45)", glitchB: "rgba(122,44,240,0.45)",
+      startLine1: "The veil is thin tonight. 40 bricks of static.",
+      startLine2: "Drag or arrow keys. Send them back.",
+      overTitle: "CLAIMED", overTitleColor: "#ff9b1a",
+      overLine2: "Press Start to rise again."
+    }
+  };
+  var SEASON_DEFAULTS = [
+    { theme: "spooky", start: [10, 15], end: [11, 2] } /* Halloween season */
+  ];
+  function seasonalDefault(){
+    try {
+      var now = new Date();
+      var m = now.getMonth() + 1, d = now.getDate();
+      for (var i = 0; i < SEASON_DEFAULTS.length; i++) {
+        var s = SEASON_DEFAULTS[i];
+        var afterStart = (m > s.start[0]) || (m === s.start[0] && d >= s.start[1]);
+        var beforeEnd = (m < s.end[0]) || (m === s.end[0] && d <= s.end[1]);
+        if (afterStart && beforeEnd) return s.theme;
+      }
+    } catch (e) {}
+    return "classic";
+  }
+  var themeId = loadStored("gb-theme", null);
+  if (!themeId || !THEMES[themeId]) themeId = seasonalDefault();
+  var THEME = THEMES[themeId];
+  var themeBtn = document.getElementById("themeBtn");
+  try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); } catch (e) {}
+  themeBtn.textContent = "Theme: " + THEME.name;
+  function applyTheme(id){
+    themeId = THEMES[id] ? id : "classic";
+    THEME = THEMES[themeId];
+    try { document.body.classList.toggle("theme-spooky", themeId === "spooky"); } catch (e) {}
+    themeBtn.textContent = "Theme: " + THEME.name;
+    saveStored("gb-theme", themeId);
+    /* Recolor the current wall to the theme palette. Layouts, HP, and
+       drops stay exactly as they were; only the paint changes. */
+    bricks.forEach(function(br){
+      br.color = THEME.bricks[(br.row || 0) % THEME.bricks.length];
+    });
+    if (!running) draw();
+  }
 
   /* Crisp rendering on phone screens without changing game coordinates. */
   function sharpenCanvas(){
@@ -180,7 +263,7 @@
     var cols = 8, gap = 4;
     var bw = Math.floor((BOARD_W - 16 - (cols - 1) * gap) / cols);
     var bh = 18, x0 = (BOARD_W - (cols * bw + (cols - 1) * gap)) / 2;
-    var colors = ["#00f0ff", "#ff2e88", "#ffe259", "#ffffff", "#00f0ff", "#ff2e88", "#ffe259", "#ffffff"];
+    var colors = THEME.bricks;
     var hpTwo = level >= 2, hpThree = level >= 4;
     var idx = 0;
     for (var r = 0; r < pattern.length; r++) {
@@ -197,7 +280,7 @@
           if (drop === "S" && bricks.some(function(b){ return b.drop === "S"; })) drop = "E";
         }
         bricks.push({ x: x0 + c * (bw + gap), y: 46 + r * (bh + gap), w: bw, h: bh,
-                      color: colors[r % colors.length], hp: hp, alive: true, drop: drop });
+                      color: colors[r % colors.length], hp: hp, alive: true, drop: drop, row: r });
         idx++;
       }
     }
@@ -224,7 +307,7 @@
         x: brick.x + brick.w / 2, y: brick.y + brick.h / 2,
         vx: (Math.random() - 0.5) * 5, vy: (Math.random() - 0.5) * 5,
         life: reducedMotion ? 14 : 26,
-        color: Math.random() < 0.5 ? "#00f0ff" : "#ff2e88",
+        color: THEME.particles[(Math.random() * THEME.particles.length) | 0],
         size: 2 + Math.random() * 3
       });
     }
@@ -395,11 +478,41 @@
     }
   }
 
+  /* Seasonal backdrop dressing. Pure decoration: no gameplay reads it. */
+  function drawMoon(){
+    var mx = 348, my = 40, mr = 22;
+    var g = ctx.createRadialGradient(mx, my, mr * 0.2, mx, my, mr * 2.4);
+    g.addColorStop(0, "rgba(255,217,160,0.85)");
+    g.addColorStop(0.4, "rgba(255,180,100,0.28)");
+    g.addColorStop(1, "rgba(255,180,100,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(mx, my, mr * 2.4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#ffd9a0";
+    ctx.beginPath(); ctx.arc(mx, my, mr, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(198,138,80,0.55)";
+    ctx.beginPath(); ctx.arc(mx - 7, my - 4, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 6, my + 7, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + 8, my - 8, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+  function drawMist(){
+    var t = 0;
+    if (!reducedMotion) { try { t = performance.now() / 1000; } catch (e) {} }
+    ctx.fillStyle = "rgba(150,120,200,0.08)";
+    for (var i = 0; i < 4; i++) {
+      var x = reducedMotion ? (60 + i * 110) : (((t * 9 + i * 170) % (BOARD_W + 260)) - 130);
+      ctx.beginPath();
+      ctx.ellipse(x, 130 + i * 100, 130, 22, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   function draw(){
     ctx.clearRect(0, 0, BOARD_W, BOARD_H);
-    ctx.strokeStyle = "rgba(0,240,255,0.07)"; ctx.lineWidth = 1;
+    if (THEME.moon) drawMoon();
+    ctx.strokeStyle = THEME.grid; ctx.lineWidth = 1;
     for (var gx = 0; gx <= BOARD_W; gx += 40) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, BOARD_H); ctx.stroke(); }
     for (var gy = 0; gy <= BOARD_H; gy += 40) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(BOARD_W, gy); ctx.stroke(); }
+    if (THEME.mist) drawMist();
     bricks.forEach(function(br){
       if (!br.alive) return;
       ctx.fillStyle = br.color; ctx.fillRect(br.x, br.y, br.w, br.h);
@@ -413,8 +526,8 @@
       if (br.drop) { ctx.fillStyle = "#04070d"; ctx.font = "bold 10px system-ui"; ctx.textAlign = "center"; ctx.fillText(br.drop, br.x + br.w / 2, br.y + 13); }
     });
     glitches.forEach(function(gl){
-      ctx.fillStyle = "rgba(0,240,255,0.45)"; ctx.fillRect(gl.x - 3, gl.y, gl.w, 4);
-      ctx.fillStyle = "rgba(255,46,136,0.45)"; ctx.fillRect(gl.x + 3, gl.y + gl.h - 4, gl.w, 4);
+      ctx.fillStyle = THEME.glitchA; ctx.fillRect(gl.x - 3, gl.y, gl.w, 4);
+      ctx.fillStyle = THEME.glitchB; ctx.fillRect(gl.x + 3, gl.y + gl.h - 4, gl.w, 4);
     });
     particles.forEach(function(pt){
       ctx.fillStyle = pt.color; ctx.fillRect(pt.x, pt.y, pt.size, pt.size);
@@ -429,32 +542,49 @@
       ctx.strokeStyle = "#ffe259"; ctx.setLineDash([6, 4]);
       ctx.beginPath(); ctx.moveTo(0, BOARD_H - 6); ctx.lineTo(BOARD_W, BOARD_H - 6); ctx.stroke(); ctx.setLineDash([]);
     }
-    ctx.fillStyle = "#00f0ff";
-    ctx.shadowColor = reducedMotion ? "transparent" : "#00f0ff";
+    ctx.fillStyle = THEME.paddle;
+    ctx.shadowColor = reducedMotion ? "transparent" : THEME.paddle;
     ctx.shadowBlur = reducedMotion ? 0 : 12;
     ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
     ctx.shadowBlur = 0;
     balls.forEach(function(b){
-      ctx.fillStyle = "#ffffff";
+      /* Ember trail is drawn from the ball's recent positions. It never
+         touches movement math, which lives in step(). */
+      if (THEME.ball.trail && !reducedMotion) {
+        b._trail = b._trail || [];
+        b._trail.push({ x: b.x, y: b.y });
+        if (b._trail.length > 7) b._trail.shift();
+        for (var i = 0; i < b._trail.length; i++) {
+          var a = (i + 1) / b._trail.length;
+          ctx.globalAlpha = a * 0.35;
+          ctx.fillStyle = THEME.ball.trail;
+          ctx.beginPath(); ctx.arc(b._trail[i].x, b._trail[i].y, b.r * a * 0.7, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = THEME.ball.color;
+      ctx.shadowColor = reducedMotion ? "transparent" : THEME.ball.glow;
+      ctx.shadowBlur = reducedMotion ? 0 : 10;
       ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
     });
     if (!running) {
       ctx.fillStyle = "rgba(4,7,13,0.55)"; ctx.fillRect(0, 0, BOARD_W, BOARD_H);
       ctx.textAlign = "center";
       if (gameOver) {
-        ctx.fillStyle = "#ff2e88"; ctx.font = "bold 26px system-ui";
-        ctx.fillText("SIGNAL LOST", BOARD_W / 2, BOARD_H / 2 - 24);
+        ctx.fillStyle = THEME.overTitleColor; ctx.font = "bold 26px system-ui";
+        ctx.fillText(THEME.overTitle, BOARD_W / 2, BOARD_H / 2 - 24);
         ctx.fillStyle = "#e8fbff"; ctx.font = "15px system-ui";
         ctx.fillText("Score " + finalScore + ". Best " + best + ".", BOARD_W / 2, BOARD_H / 2 + 4);
         ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
-        ctx.fillText("Press Start to jack back in.", BOARD_W / 2, BOARD_H / 2 + 30);
+        ctx.fillText(THEME.overLine2, BOARD_W / 2, BOARD_H / 2 + 30);
       } else {
         ctx.fillStyle = "#00f0ff"; ctx.font = "bold 22px system-ui";
         ctx.fillText("GLITCH BREAKOUT", BOARD_W / 2, BOARD_H / 2 - 24);
         ctx.fillStyle = "#e8fbff"; ctx.font = "15px system-ui";
-        ctx.fillText("The grid is corrupted. 40 bricks of static.", BOARD_W / 2, BOARD_H / 2 + 4);
+        ctx.fillText(THEME.startLine1, BOARD_W / 2, BOARD_H / 2 + 4);
         ctx.fillStyle = "#8fb8c4"; ctx.font = "14px system-ui";
-        ctx.fillText("Drag or arrow keys. Keep the signal alive.", BOARD_W / 2, BOARD_H / 2 + 30);
+        ctx.fillText(THEME.startLine2, BOARD_W / 2, BOARD_H / 2 + 30);
       }
     } else if (paused) {
       ctx.fillStyle = "rgba(4,7,13,0.6)"; ctx.fillRect(0, 0, BOARD_W, BOARD_H);
@@ -504,6 +634,10 @@
   }
   startBtn.addEventListener("click", start);
   pauseBtn.addEventListener("click", togglePause);
+  themeBtn.addEventListener("click", function(){
+    applyTheme(themeId === "spooky" ? "classic" : "spooky");
+    blip(520, 0.08);
+  });
   soundBtn.addEventListener("click", function(){
     soundOn = !soundOn;
     soundBtn.textContent = soundOn ? "Sound: On" : "Sound: Off";
